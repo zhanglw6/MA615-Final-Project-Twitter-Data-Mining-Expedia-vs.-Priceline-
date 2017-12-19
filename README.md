@@ -1,1 +1,2 @@
-# MA615-Final-Project-Twitter-Data-Mining-Expedia-vs.-Priceline-
+# MA615-Final-Project-Twitter-Data-Mining
+Expedia-vs.-Priceline
