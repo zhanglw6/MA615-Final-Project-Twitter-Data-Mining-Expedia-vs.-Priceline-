@@ -1,0 +1,541 @@
+---
+title: "MA615 Final Project"
+author: "Liwen Zhang, Sophie"
+date: "Dec 13, 2017"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	message = FALSE,
+	warning = FALSE,
+	include = FALSE
+)
+library(ROAuth)
+library(RCurl)
+library(rjson)
+library(streamR)
+library(devtools)
+library(bitops)
+library(RCurl)
+library(twitteR)
+library(tm)
+library(wordcloud)
+library(stringr)
+library(leaflet)
+library(plotly)
+library(tidytext)
+library(reshape2)
+library(tidytext)
+library(dplyr)
+library(plyr)
+library(ggplot2)
+```
+
+###Access data###
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#get info from https://apps.twitter.com/
+api_key <- 	"IrvYBtz2X3zeE0aoL04K74G0q"
+api_secret <- "RNRuZf000UN17fLLizsmBtf2t3lS16pizUj5w1JVdr6LMLLAJ4"
+access_token <- "2984992200-xGkBe5pXbQGJht4qZFIFyt2RWyYq5llZfbbW0C3"
+access_token_secret <- "nTcwpkDyaJ1zy7ps6YT1IL1RJ98cH0t713Hvk0yMpyI8s"
+#give auth to pull data
+setup_twitter_oauth(api_key, api_secret, access_token, access_token_secret)
+1
+
+#pull data from Twitter
+eptweets <- searchTwitter('expedia', lang = "en", n = 10000)
+pltweets <- searchTwitter('priceline', lang = "en", n = 10000)
+# Transform tweets list into a data frame
+eptweets.df <- twListToDF(eptweets)
+pltweets.df <- twListToDF(pltweets)
+#save the tweets
+saveRDS(eptweets, file="expediatweets.rds")
+saveRDS(pltweets, file="pricelinetweets.rds")
+write.csv(eptweets.df, "expediatweets.cvs")
+write.csv(pltweets.df, "pricelinetweets.cvs")
+```
+
+```{r}
+#input data
+eptweets <- readRDS("expediatweets.rds")
+pltweets <- readRDS("pricelinetweets.rds")
+eptweets.df <- read.csv("expediatweets.cvs")
+pltweets.df <- read.csv("pricelinetweets.cvs")
+```
+
+
+###MAP###
+```{r}
+#set up oauth for map data
+requestURL <- "https://api.twitter.com/oauth/request_token"
+accessURL <- "https://api.twitter.com/oauth/access_token"
+authURL <- "https://api.twitter.com/oauth/authorize"
+consumerKey <- 	"IrvYBtz2X3zeE0aoL04K74G0q"
+consumerSecret <- "RNRuZf000UN17fLLizsmBtf2t3lS16pizUj5w1JVdr6LMLLAJ4"
+my_oauth <- OAuthFactory$new(consumerKey = consumerKey, consumerSecret = consumerSecret, 
+                             requestURL = requestURL, accessURL = accessURL, authURL = authURL)
+my_oauth$handshake(cainfo = system.file("CurlSSL", "cacert.pem", package = "RCurl"))
+save(my_oauth, file = "my_oauth.Rdata")
+load("my_oauth.Rdata")
+```
+```{r}
+###Expedia###
+#pull data and save as json file
+filterStream("epmap.json",
+             track=c("expedia"),
+             locations = c(-125, 25, -66,50),
+             timeout=200, oauth=my_oauth)
+epmap<-parseTweets("epmap.json", verbose = TRUE)
+ck1 <- sum(epmap$lat>0, na.rm = TRUE)
+ck2 <- sum(epmap$place_lat>0, na.rm = TRUE)
+ck3 <- sum(!is.na(epmap$location))
+map.data <- map_data("state")
+eppoints <- data.frame(x = as.numeric(epmap$lon),
+                       y = as.numeric(epmap$lat))
+eppoints <- eppoints[eppoints$y > 25, ]
+eppoints<-filter(eppoints,y>19&y<65,x>(-161.7)&x<(-68.01))
+# epp1 <- ggplot(map.data) + 
+#   geom_map(aes(map_id = region),  
+#            map = map.data,  
+#            fill = "white",             
+#            color = "grey20", size = 0.25) + 
+#   expand_limits(x = map.data$long, y = map.data$lat) +            
+#   theme(axis.line = element_blank(),  
+#         axis.text = element_blank(),  
+#         axis.ticks = element_blank(),                     
+#         axis.title = element_blank(),  
+#         panel.background = element_blank(),  
+#         panel.border = element_blank(),                     
+#         panel.grid.major = element_blank(), 
+#         plot.background = element_blank(),                     
+#         plot.margin = unit(0 * c( -1.5, -1.5, -1.5, -1.5), "lines")) +  
+#         geom_point(data = netpoints,             
+#         aes(x = x, y = y), size = 1,  
+#         alpha = 1/5, color = "red")  
+eppoints <- eppoints[complete.cases(eppoints$x),]
+write.csv(eppoints, "expediamap.csv")
+#leaflet plot map
+leaflet(eppoints) %>% addTiles('http://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png') %>%
+  addCircles(~eppoints$x, ~eppoints$y, popup=eppoints$x, weight = 3, radius=40,
+                      color="blue", stroke = TRUE, fillOpacity = 0.7) %>%  
+      setView(lng=-97, lat=40, zoom=4) %>%
+      addLegend("topright", colors = "blue", labels = "Expedia")
+```
+```{r}
+###Priceline###
+filterStream("plmap.json",
+             track=c("priceline"),
+             locations = c(-125, 25, -66,50),
+             timeout=200, oauth=my_oauth)
+plmap<-parseTweets("plmap.json", verbose = TRUE)
+ck1 <- sum(plmap$lat>0, na.rm = TRUE)
+ck2 <- sum(plmap$place_lat>0, na.rm = TRUE)
+ck3 <- sum(!is.na(plmap$location))
+map.data <- map_data("state")
+plpoints <- data.frame(x = as.numeric(plmap$lon),
+                       y = as.numeric(plmap$lat))
+plpoints <- plpoints[plpoints$y > 25, ]
+plpoints<-filter(plpoints,y>19&y<65,x>(-161.7)&x<(-68.01))
+# ggplot(map.data) + 
+#   geom_map(aes(map_id = region),  
+#            map = map.data,  
+#            fill = "white",             
+#            color = "grey20", size = 0.25) + 
+#   expand_limits(x = map.data$long, y = map.data$lat) +            
+#   theme(axis.line = element_blank(),  
+#         axis.text = element_blank(),  
+#         axis.ticks = element_blank(),                     
+#         axis.title = element_blank(),  
+#         panel.background = element_blank(),  
+#         panel.border = element_blank(),                     
+#         panel.grid.major = element_blank(), 
+#         plot.background = element_blank(),                     
+#         plot.margin = unit(0 * c( -1.5, -1.5, -1.5, -1.5), "lines")) +  
+#         geom_point(data = netpoints,             
+#         aes(x = x, y = y), size = 1,  
+#         alpha = 1/5, color = "blue")
+plpoints <- plpoints[complete.cases(plpoints$x),]
+write.csv(plpoints, "pricelinemap.csv")
+#leaflet plot map
+leaflet(plpoints) %>% addTiles('http://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png') %>%
+  addCircles(~plpoints$x, ~plpoints$y, popup=plpoints$x, weight = 3, radius=40,
+                      color="orange", stroke = TRUE, fillOpacity = 0.7) %>%  
+      setView(lng=-97, lat=40, zoom=3)%>%
+      addLegend("topright", colors = "orange", labels = "Priceline")
+```
+
+
+###Timeline###
+```{r}
+#retweets/favorite counts by date plot
+###EXPEDIA###
+plot_ly(eptweets.df, x = ~created, y = ~favoriteCount, name="Favorite", type = 'scatter',
+              mode = 'lines', line=list(color="red")) %>% 
+  add_trace(y=max(eptweets.df$favoriteCount, eptweets.df$retweetCount), type = 'scatter', 
+            mode = 'lines', line=list(color="white"), hoverinfo = "text", text = ~text, showlegend = F) %>% 
+  add_trace(y=~retweetCount, name="Retweet", type = 'scatter', 
+            mode = 'lines', line=list(color="blue"), opacity = 0.3) %>% 
+  layout(title = 'Twitter Favorite/Retweet Counts about Expedia', 
+         xaxis = list(title = 'Date'), yaxis=list(title='Number of favorites/retweets'))
+
+###PRICELINE###
+plot_ly(pltweets.df, x = ~created, y = ~favoriteCount, name="Favorite", type = 'scatter',
+              mode = 'lines', line=list(color="red")) %>% 
+  add_trace(y=max(pltweets.df$favoriteCount, pltweets.df$retweetCount), type = 'scatter', 
+            mode = 'lines', line=list(color="white"), hoverinfo = "text", text = ~text, showlegend = F) %>% 
+  add_trace(y=~retweetCount, name="Retweet", type = 'scatter', 
+            mode = 'lines', line=list(color="blue"), opacity = 0.3) %>% 
+  layout(title = 'Twitter Favorite/Retweet Counts about Priceline', 
+         xaxis = list(title = 'Date'), yaxis=list(title='Number of favorites/retweets'))
+#breakdown booking date by weekday
+#to see the pattern of tweets about expedia being creted
+# eptweets.df$daybook <- weekdays(eptweets.df$created)
+# library(sp)
+# eptweets.df$weekbook <- as.Date(cut(eptweets.df$created, breaks = "week"))
+# #reorder levels
+# eptweets.df$daybook <- factor(eptweets.df$daybook, levels = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+# ggplot(eptweets.df, aes(eptweets.df$daybook, fill=eptweets.df$daybook)) +
+#   geom_bar(stat = "count") +
+#   labs(x= "Day of Week", y = "Count", title="Pattern of Day of Week Bookings") +
+#   theme(legend.title = element_text(colour="chocolate", size=12, face="bold")) +
+#   facet_wrap(~eptweets.df$weekbook)
+```
+
+
+###Word Cloud###
+```{r}
+##EXPEDIA##
+#convert list of text to vector of character 
+ep_text <- sapply(eptweets, function(x) x$getText())
+#remove RT text
+ep_clean <- gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", ep_text)
+#remove html link
+ep_clean <- gsub("http[^[:blank:]]+", "", ep_clean)
+#remove people name
+ep_clean <-  gsub("@\\w+", "", ep_clean)
+
+#create corpus from vector of tweets and more cleaning
+ep_corpus <- Corpus(VectorSource(ep_clean))
+#inspect(ep_corpus[1]) #look at corpus
+#solve emoji error
+ep_corpus <-tm_map(ep_corpus, function(x) iconv(x, to='UTF-8-MAC', sub='byte'))
+ 
+#remove punctuation
+ep_clean <- tm_map(ep_corpus, removePunctuation)
+#lower case everything
+ep_clean <- tm_map(ep_clean, content_transformer(tolower))
+#remove stop words
+ep_clean <- tm_map(ep_clean, removeWords, stopwords("english"))
+#remove numbers
+ep_clean <- tm_map(ep_clean, removeNumbers)
+#remove white space
+ep_clean <- tm_map(ep_clean, stripWhitespace)
+#remove search words if wanted
+ep_clean <- tm_map(ep_clean, removeWords, c("expedia", "amp", "..."))
+
+saveRDS(ep_clean, file='ep_clean.rds')
+
+#create word cloud
+pal <- brewer.pal(12, "Paired")
+wordcloud(ep_clean, min.freq = 5, random.order = F, scale = c(3, 0.5), col = pal, max.words = 100)
+```
+```{r}
+##PRICELINE##
+#convert list of text to vector of character 
+pl_text <- sapply(pltweets, function(x) x$getText())
+#remove RT text
+pl_clean <- gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", pl_text)
+#remove html link
+pl_clean <- gsub("http[^[:blank:]]+", "", pl_clean)
+#remove people name
+pl_clean <-  gsub("@\\w+", "", pl_clean)
+
+#create corpus from vector of tweets and more cleaning
+pl_corpus <- Corpus(VectorSource(pl_clean))
+#inspect(pl_corpus[1]) #look at corpus
+#solve emoji error
+pl_corpus <-tm_map(pl_corpus, function(x) iconv(x, to='UTF-8-MAC', sub='byte'))
+ 
+#remove punctuation
+pl_clean <- tm_map(pl_corpus, removePunctuation)
+#lower case everything
+pl_clean <- tm_map(pl_clean, content_transformer(tolower))
+#remove stop words
+pl_clean <- tm_map(pl_clean, removeWords, stopwords("english"))
+#remove numbers
+pl_clean <- tm_map(pl_clean, removeNumbers)
+#remove white space
+pl_clean <- tm_map(pl_clean, stripWhitespace)
+#remove search words if wanted
+pl_clean <- tm_map(pl_clean, removeWords, c("priceline", "amp", "...", "entrepreneur"))
+
+saveRDS(pl_clean, file='pl_clean.rds')
+
+#create word cloud
+pal <- brewer.pal(12, "Paired")
+wordcloud(pl_clean, min.freq = 5, random.order = F, scale = c(3, 0.5), col = pal, max.words = 100)
+```
+
+
+###Sentiment Analysis###
+```{r}
+###EXPEDIA###
+eptweets.df$text <- as.character(eptweets.df$text)
+eptweets.word <- eptweets.df %>%
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words) %>%
+  filter(str_detect(word, "^[a-z']+$"))
+
+## sentiment 
+get_sentiments("afinn")
+AFINN <- get_sentiments("afinn") %>% dplyr::select(word,score)
+
+eptweets.sentiment <- eptweets.word %>%
+  inner_join(AFINN, by = "word") %>%
+  select(word, score) %>% 
+  mutate(sentiment0 = ifelse(score>0, "positive", "negative")) %>% 
+  group_by(sentiment0)
+
+write.csv(eptweets.sentiment, "epsenti.csv")
+
+## plot the result
+p1 <- ggplot(na.omit(eptweets.sentiment)) +
+  geom_bar(mapping=aes(x=score, fill = sentiment0)) +
+  geom_vline(xintercept = mean(eptweets.sentiment$score[eptweets.sentiment$sentiment0 == "positive"]), linetype="dashed", size=0.7, col="blue") +
+  geom_vline(xintercept = mean(eptweets.sentiment$score[eptweets.sentiment$sentiment0 == "negative"]), linetype="dashed", size=0.7, col="red") +
+  labs(x = "sentiment score", title = "Sentiment Score for Tweets about Expedia")
+ggplotly(p1)
+```
+```{r}
+###PRICELINE###
+pltweets.df$text <- as.character(pltweets.df$text)
+pltweets.word <- pltweets.df %>%
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words) %>%
+  filter(str_detect(word, "^[a-z']+$"))
+
+## sentiment 
+get_sentiments("afinn")
+AFINN <- get_sentiments("afinn") %>% dplyr::select(word,score)
+#nrcjoy <- get_sentiments("nrc") %>% filter(sentiment == "joy")
+#bing <- get_sentiments("bing")
+
+pltweets.sentiment <- pltweets.word %>%
+  inner_join(AFINN, by = "word") %>%
+  select(word, score) %>% 
+  mutate(sentiment0 = ifelse(score>0, "positive", "negative")) %>% 
+  group_by(sentiment0)
+
+write.csv(pltweets.sentiment, "plsenti.csv")
+
+## plot the result
+p2 <- ggplot(na.omit(pltweets.sentiment)) +
+  geom_bar(mapping=aes(x=score, fill = sentiment0)) +
+  geom_vline(xintercept = mean(pltweets.sentiment$score[pltweets.sentiment$sentiment0 == "positive"]), linetype="dashed", size=0.7, col="blue") +
+  geom_vline(xintercept = mean(pltweets.sentiment$score[pltweets.sentiment$sentiment0 == "negative"]), linetype="dashed", size=0.7, col="red") +
+  labs(x = "sentiment score", title = "Sentiment Score for Tweets about Priceline")
+ggplotly(p2)
+```
+###Word Cloud for Sentiment Analysis###
+```{r}
+###EXPEDIA###
+#plot of top 10 negative and positive words
+eptweets.sentiment %>%
+  select(word, score, sentiment0) %>% 
+  count(c("word", "score", "sentiment0")) %>% 
+  group_by(sentiment0) %>%
+  top_n(n=10, wt = freq) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, freq)) %>%
+  ggplot(aes(word, freq, fill = sentiment0)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment0, scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+
+#comparison word cloud
+eptweets.sentiment %>%
+  select(word, score, sentiment0) %>% 
+  count(c("word", "score", "sentiment0")) %>% 
+  group_by(sentiment0) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, freq)) %>%
+  acast(word ~ sentiment0, value.var = "freq", fill = 0) %>%
+  comparison.cloud(colors = brewer.pal(3, "Set2"))
+```
+```{r}
+###PRICELINE###
+#plot of top 10 negative and positive words
+pltweets.sentiment %>%
+  select(word, score, sentiment0) %>% 
+  count(c("word", "score", "sentiment0")) %>% 
+  group_by(sentiment0) %>%
+  top_n(n=10, wt = freq) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, freq)) %>%
+  ggplot(aes(word, freq, fill = sentiment0)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment0, scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+
+#comparison word cloud
+pltweets.sentiment %>%
+  select(word, score, sentiment0) %>% 
+  count(c("word", "score", "sentiment0")) %>% 
+  group_by(sentiment0) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, freq)) %>%
+  acast(word ~ sentiment0, value.var = "freq", fill = 0) %>%
+  comparison.cloud(colors = brewer.pal(3, "Set2"))
+```
+
+###Hashtag Analysis###
+```{r}
+extract.hashes = function(vec){
+ 
+hash.pattern = "#[[:alpha:]]+"
+have.hash = grep(x = vec, pattern = hash.pattern)
+
+hash.matches = gregexpr(pattern = hash.pattern,
+                        text = vec[have.hash])
+extracted.hash = regmatches(x = vec[have.hash], m = hash.matches)
+ 
+df = data.frame(table(tolower(unlist(extracted.hash))))
+colnames(df) = c("tag","freq")
+df = df[order(df$freq,decreasing = TRUE),]
+return(df)
+}
+###EXPEDIA###
+tw = userTimeline("expedia", n = 8000)
+tw = twListToDF(tw)
+vec1 = tw$text
+ 
+dat = head(extract.hashes(vec1),50)
+dat2 = transform(dat,tag = reorder(tag,freq))
+
+ggplot(dat2, aes(x = tag, y = freq)) + geom_bar(fill = "blue", stat = "identity") +
+  coord_flip() + labs(title = "Hashtag frequencies in the tweets of Expedia (@Expedia)")
+```
+```{r}
+###PRICELINE###
+tw = userTimeline("priceline", n = 8000)
+tw = twListToDF(tw)
+vec1 = tw$text
+ 
+dat = head(extract.hashes(vec1),50)
+dat3 = transform(dat,tag = reorder(tag,freq))
+
+ggplot(dat3, aes(x = tag, y = freq)) + geom_bar(fill = "blue", stat = "identity") +
+  coord_flip() + labs(title = "Hashtag frequencies in the tweets of Priceline (@Priceline)")
+#ref: https://www.r-bloggers.com/using-r-to-find-obamas-most-frequent-twitter-hashtags/
+```
+
+
+###Time of Tweets###
+```{r}
+###EXPEDIA###
+eptweets.df$Day <- weekdays(as.Date(eptweets.df$created))
+#reorder levels
+eptweets.df$Day <- factor(eptweets.df$Day, levels = c("Saturday", "Friday","Thursday", "Wednesday", "Tuesday", "Monday", "Sunday"))
+eptweets.df$Hour <- substring(eptweets.df$created,12,13)
+eptweets.df$Hour <- as.factor(eptweets.df$Hour)
+
+epp2 <- ggplot(eptweets.df, aes(x = eptweets.df$Hour, y = eptweets.df$Day, 
+                                size = retweetCount, color = Day)) +
+        geom_point() +
+  labs(x = "Hour", y = "Day of Week", title = "When do People Tweets about Expedia?")
+ggplotly(epp2)
+
+#aggregate(eptweets.df$favoriteCount, by=list(eptweets.df$Day, eptweets.df$Hour), FUN=sum)
+# plot_ly(eptweets.df, x = ~eptweets.df$Hour, y = ~eptweets.df$Day, text = ~eptweets.df$text, color = list(eptweets.df$favoriteCount), colors = 'Reds', type = 'scatter', mode = 'markers', marker = list(size = ~eptweets.df$favoriteCount), opacity = 0.5) %>%
+#   layout(title = 'Gender Gap in Earnings per University',
+#          xaxis = list(showgrid = FALSE),
+#          yaxis = list(showgrid = FALSE))
+```
+```{r}
+###PRICELINE###
+pltweets.df$Day <- weekdays(as.Date(pltweets.df$created))
+#reorder levels
+pltweets.df$Day <- factor(pltweets.df$Day, levels = c("Saturday", "Friday","Thursday", "Wednesday", "Tuesday", "Monday", "Sunday"))
+pltweets.df$Hour <- substring(pltweets.df$created,12,13)
+pltweets.df$Hour <- as.factor(pltweets.df$Hour)
+
+plp2 <- ggplot(pltweets.df, aes(x = pltweets.df$Hour, y = pltweets.df$Day, 
+                                size = retweetCount, color = Day)) +
+        geom_point() +
+  labs(x = "Hour", y = "Day of Week", title = "When do People Tweets about Priceline?")
+ggplotly(plp2)
+```
+
+
+
+
+##not using
+```{r}
+###MAP EXPEDIA###
+#clean up data
+pltweets.df1 <- pltweets.df[complete.cases(pltweets.df$longitude),]
+pltweets.df1$longitude <- as.numeric(pltweets.df1$longitude)
+pltweets.df1$latitude <- as.numeric(pltweets.df1$latitude)
+
+# plot map with leaflet
+leaflet(pltweets.df1) %>% addTiles('http://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', 
+                                         attribution='Map tiles by <a href="http://stamen.com">Stamen Design</a>, <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a> &mdash; Map data &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>') %>% 
+  addCircles(~pltweets.df1$longitude, ~pltweets.df1$latitude, popup=pltweets.df1$longitude, weight = 3, radius=40, color="#ffa500", stroke = TRUE, fillOpacity = 0.8) 
+#https://rpubs.com/cosmopolitanvan/geotwitter
+
+or 
+
+leaflet(data = pltweets.df1) %>% 
+  addTiles() %>%
+  addMarkers(lng = ~pltweets.df1$longitude, lat = ~pltweets.df1$latitude, popup = ~ pltweets.df1$longitude) %>% 
+  addProviderTiles("CartoDB.Positron") %>%
+  addCircleMarkers(
+    stroke = FALSE, fillOpacity = 0.5
+  ) 
+```
+```{r}
+##sentiment analysis using "bing"##
+#split the text
+textbag <- str_split(ep_clean, pattern = "\\s+")
+#convert list to chr
+textbag <- unlist(textbag)
+
+#input pos and neg words
+pos.words = readLines("positive-words.txt")
+neg.words = readLines("negative-words.txt")
+
+#run the function from TA
+library(stringr)
+library(plyr)
+score.sentiment = function(tweets, pos.words, neg.words, .progress='none')
+{
+  scores = laply(tweets, function(tweet, pos.words, neg.words) {
+    tweet = tolower(tweet)
+    words = unlist(strsplit(tweet, " "))
+    pos.matches = match(words, pos.words)
+    neg.matches = match(words, neg.words)
+    
+    pos.matches = !is.na(pos.matches)
+    neg.matches = !is.na(neg.matches)
+    
+    score = sum(pos.matches) - sum(neg.matches)
+    
+    return(score)
+  }, pos.words, neg.words, .progress=.progress )
+  
+  scores.df = data.frame(score=scores, text=tweets)
+  return(scores.df)
+}
+score <- score.sentiment(textbag, pos.words, neg.words)
+hist(score$score[score$score != 0], xlab=" ", main="Sentiment Analysis of Expedia Tweets", border="black", col="skyblue")
+
+#score$text[score$score > 0]
+#score$text[score$score < 0]
+```
